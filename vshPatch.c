@@ -1,3 +1,4 @@
+//build
 #include <vitasdkkern.h>
 #include <psp2kern/io/fcntl.h>
 #include <psp2kern/io/dirent.h>
