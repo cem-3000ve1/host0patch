@@ -1,0 +1,61 @@
+name: Build Miaki
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y make git wget cmake python-is-python3 bzip2
+    
+    - name: Setup environment variables
+      run: |
+        echo "VITASDK=/usr/local/vitasdk" >> $GITHUB_ENV
+        echo "PATH=/usr/local/vitasdk/bin:$PATH" >> $GITHUB_ENV
+
+    # - name: Install VitaSDK
+    #   run: |
+    #     git clone https://github.com/vitasdk/vdpm
+    #     cd vdpm
+    #     ./bootstrap-vitasdk.sh
+    #     ./install-all.sh
+        
+    - name: Build TEST
+      run: |
+        cmake .
+
+    - name: Upload VPK as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: TEST
+        path: vsPatch.skprx
+      if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    
+    - name: Create Draft Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true 
+        tag_name: v${{ github.run_number }} 
+        name: Miaki Draft Release v${{ github.run_number }}
+        body: |
+          This is a draft release for Miaki.
+          Built from commit: ${{ github.sha }}
+        files: |
+          app/MIAKI.vpk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
