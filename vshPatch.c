@@ -1,65 +1,84 @@
-// Thanks Dots and Princess for helping me haha
-// Fios2 memes :D
-
-
+#include <vitasdkkern.h>
+#include <psp2kern/io/fcntl.h>
+#include <psp2kern/io/dirent.h>
+#include <taihen.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdarg.h>
-#include <vitasdkkern.h>
-#include <psp2kern/kernel/proc_event.h>
-#include <taihen.h>
 
 #define printf ksceDebugPrintf
 
+static tai_hook_ref_t ref_open;
+static tai_hook_ref_t ref_dopen;
+static tai_hook_ref_t ref_remove;
 
-typedef struct mount_point_overlay{
-  uint8_t type;
-  uint8_t order;
-  uint16_t dst_len;
-  uint16_t src_len;
-  uint32_t PID;
-  uint32_t mountId;
-  char dst[292];
-  char src[292];
-} mount_point_overlay;
+#define REDIRECT_PREFIX "ux0:/host0/"
+#define REDIRECT_TARGET "host0:/"
 
+const char *redirect_path(const char *path, char *out, size_t outlen) {
+    if (!path) return path;
 
-static mount_point_overlay overlay;
-static int overlay_out;
+    if (strncmp(path, REDIRECT_PREFIX, strlen(REDIRECT_PREFIX)) == 0) {
+        snprintf(out, outlen, "%s%s", REDIRECT_TARGET, path + strlen(REDIRECT_PREFIX));
+        return out;
+    }
 
-int create_proc(SceUID pid, SceProcEventInvokeParam2 *a2, int a3)
-{
-	overlay.type = 1;
-	overlay.order = 0xFF;
-	overlay.dst_len = 5;
-	overlay.src_len = 14;
-	overlay.PID = pid;
-	overlay.mountId = 0;
-	strncpy(overlay.dst, "vs0:", 5);
-	strncpy(overlay.src,"ux0:/vshPatch", 14);
-	overlay_out = 0;
-	
-	int ret = ksceFiosKernelOverlayAddForProcess(pid, &overlay, &overlay_out);
-	printf("ret = 0x%x overlay_out = 0x%x pid=%x\n", ret, overlay_out, pid);
-	
-	return 0;
+    return path;
 }
 
-void _start() __attribute__ ((weak, alias ("module_start")));
-int module_start(SceSize argc, const void *args)
-{
-	SceProcEventHandler handler;
-	memset(&handler, 0, sizeof(handler));
-	handler.size = sizeof(handler);
-	handler.create = create_proc;
 
-	int ret = ksceKernelRegisterProcEventHandler("SceRemapVs0ToUx0Vs0Patch", &handler, 0);
-	
-	printf("ksceKernelRegisterProcEventHandler ret = 0x%x\n", ret);
-	return SCE_KERNEL_START_SUCCESS;
+int my_open(const char *path, int flags, SceMode mode) {
+    char new_path[256];
+    const char *final_path = redirect_path(path, new_path, sizeof(new_path));
+
+    return TAI_CONTINUE(int, ref_open, final_path, flags, mode);
 }
 
-int module_stop(SceSize argc, const void *args)
-{ 	
-	return SCE_KERNEL_STOP_SUCCESS;
+
+SceUID my_dopen(const char *path) {
+    char new_path[256];
+    const char *final_path = redirect_path(path, new_path, sizeof(new_path));
+
+    return TAI_CONTINUE(SceUID, ref_dopen, final_path);
+}
+
+
+int my_remove(const char *path) {
+    char new_path[256];
+    const char *final_path = redirect_path(path, new_path, sizeof(new_path));
+
+    return TAI_CONTINUE(int, ref_remove, final_path);
+}
+
+
+void _start() __attribute__ ((weak, alias("module_start")));
+int module_start(SceSize argc, const void *args) {
+    printf("[host0_mapper] Installing hooks...\n");
+
+    taiHookFunctionImport(&ref_open,
+        TAI_MAIN_KERNEL,
+        TAI_ANY_LIBRARY,
+        0x6C60AC61,
+        my_open);
+
+    taiHookFunctionImport(&ref_dopen,
+        TAI_MAIN_KERNEL,
+        TAI_ANY_LIBRARY,
+        0xE6C0F027,
+        my_dopen);
+
+    taiHookFunctionImport(&ref_remove,
+        TAI_MAIN_KERNEL,
+        TAI_ANY_LIBRARY,
+        0x1CC3F0BC, 
+        my_remove);
+
+    return SCE_KERNEL_START_SUCCESS;
+}
+
+int module_stop(SceSize argc, const void *args) {
+    taiHookReleaseForKernel(ref_open,     my_open);
+    taiHookReleaseForKernel(ref_dopen,    my_dopen);
+    taiHookReleaseForKernel(ref_remove,   my_remove);
+    printf("[host0_mapper] Hooks removed.\n");
+    return SCE_KERNEL_STOP_SUCCESS;
 }
